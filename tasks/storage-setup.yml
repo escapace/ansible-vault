@@ -1,0 +1,29 @@
+---
+
+- name: import escapace.storage_setup role
+  ansible.builtin.import_role:
+    name: escapace.storage_setup
+
+- name: systemd drop-in for options
+  ansible.builtin.template:
+    src:  "vault-service-storage-options.conf.j2"
+    dest: "/etc/systemd/system/vault.service.d/020-storage-options.conf"
+    owner: root
+    group: root
+    mode: 0644
+
+- name: /opt/vault/data directory
+  ansible.builtin.file:
+    path: /opt/vault/data
+    state: directory
+    owner: vault
+    group: vault
+    mode: 0700
+
+- name: vault storage configuration
+  ansible.builtin.template:
+    src: storage-setup-vault.conf.j2
+    dest: /etc/filesystems.d/30-vault.conf
+    owner: root
+    group: root
+    mode: 0644
