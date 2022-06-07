@@ -1,0 +1,781 @@
+#!/bin/bash
+# This script is used to configure and run Vault on an AWS server.
+
+set -e
+set -u
+set -o pipefail
+
+umask 027
+
+SCRIPT_DIR=
+SCRIPT_NAME=
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_NAME="$(basename "$0")"
+
+readonly AWS_ASG_TAG_KEY="aws:autoscaling:groupName"
+readonly VAULT_CONFIG_FILE="default.hcl"
+readonly VAULT_SYSTEMD_CONFIG_PATH="/usr/lib/systemd/system/vault.service"
+# readonly VAULT_BOOTSTRAP_SYSTEMD_CONFIG_PATH="/etc/systemd/system/vault-bootstrap.service.d/010-secrets-bucket.conf"
+readonly MAX_RETRIES=30
+readonly SLEEP_BETWEEN_RETRIES_SEC=10
+
+function wrap() {
+  local strings="${1}"
+
+  local length
+  local cols
+  local width
+
+  length="$(echo -n "${strings}" | awk -F '|' '{print $1}' | awk '{ print length }' | sort -n | tail -1)"
+  cols="$(tput cols)"
+
+  if [[ $(((cols - 4) / length)) -ge 2 ]]; then
+    if [[ $((cols - length - 4)) -ge 80 ]]; then
+      width=80
+    else
+      width=$((cols - length - 4))
+    fi
+
+    echo -e "${strings}" \
+      | fold -s -w "${width}" \
+      | sed -e "/--/! s|^| \||g" \
+      | column -t -s '|' \
+      | sed 's/^/  /'
+  else
+    local lines
+    local line
+    readarray -t lines <<< "${strings}"
+    local option
+    local description
+
+    if [[ "${cols}" -ge 80 ]]; then
+      width="78"
+    else
+      width=$((cols - 2))
+    fi
+
+    for line in "${lines[@]}"; do
+      option="${line%%|*}"
+      description=${line#*|}
+
+      echo "${option}"
+      echo
+      echo "${description}" | fold -s -w "${width}" | sed 's/^/  /'
+      echo
+    done
+  fi
+}
+
+function print_usage() {
+  echo
+  echo "Usage: $SCRIPT_NAME [OPTIONS]"
+  echo
+  echo "This script is used to configure and run Vault on an AWS server."
+  echo
+  echo "Options:"
+  echo
+
+  wrap "$(
+    echo -e "--role|The instance role, one of \"server\", \"client\" or \"bastion\"."
+    echo -e "--auto-join-tag-key|Automatically form a cluster with instances that have this tag key."
+    echo -e "--auto-join-tag-value|Automatically form a cluster with instances that have this tag value."
+    echo -e "--kms-key-arn|The AWS KMS key ID or ARN to use for encryption and decryption."
+    echo -e "--secrets-bucket-name|AWS S3 secrets bucket name."
+    echo -e "--ui|Enables the service of the web UI from this agent."
+    echo -e "--interface|Bind to interface."
+    echo -e "--ipv6|Use IPv6."
+  )"
+  echo
+  echo "Example:"
+  echo
+  echo "  $SCRIPT_NAME --server"
+  echo
+}
+
+function log() {
+  local -r level="$1"
+  local -r message="$2"
+  local -r timestamp=$(date +"%Y-%m-%d %H:%M:%S")
+  echo >&2 -e "${timestamp} [${level}] [$SCRIPT_NAME] ${message}"
+}
+
+function log_info() {
+  local -r message="$1"
+  log "INFO" "$message"
+}
+
+function log_warn() {
+  local -r message="$1"
+  log "WARN" "$message"
+}
+
+function log_error() {
+  local -r message="$1"
+  log "ERROR" "$message"
+}
+
+# Based on code from: http://stackoverflow.com/a/16623897/483528
+function strip_prefix() {
+  local -r str="$1"
+  local -r prefix="$2"
+  echo "${str#$prefix}"
+}
+
+function assert_not_empty() {
+  local -r arg_name="$1"
+  local -r arg_value="$2"
+
+  if [[ -z "$arg_value" ]]; then
+    log_error "The value for '$arg_name' cannot be empty"
+    print_usage
+    exit 1
+  fi
+}
+
+function get_instance_tags() {
+  local -r instance_id="$1"
+  local -r instance_region="${EC2_INSTANCE_REGION}"
+  local tags=""
+  local count_tags=""
+
+  log_info "Looking up tags for Instance $instance_id in $instance_region"
+  for ((i = 1; i <= "$MAX_RETRIES"; i++)); do
+    tags=$(aws ec2 describe-tags \
+      --region "$instance_region" \
+      --filters "Name=resource-type,Values=instance" "Name=resource-id,Values=${instance_id}")
+    count_tags=$(echo "$tags" | jq -r ".Tags? | length")
+    if [[ "$count_tags" -gt 0 ]]; then
+      log_info "This Instance $instance_id in $instance_region has Tags."
+      echo "$tags"
+      return
+    else
+      log_warn "This Instance $instance_id in $instance_region does not have any Tags."
+      log_warn "Will sleep for $SLEEP_BETWEEN_RETRIES_SEC seconds and try again."
+      sleep "$SLEEP_BETWEEN_RETRIES_SEC"
+    fi
+  done
+
+  log_error "Could not find Instance Tags for $instance_id in $instance_region after $MAX_RETRIES retries."
+  exit 1
+}
+
+function get_asg_size() {
+  local -r asg_name="$1"
+  local -r aws_region="${EC2_INSTANCE_REGION}"
+  local asg_json=""
+
+  log_info "Looking up the size of the Auto Scaling Group $asg_name in $aws_region"
+  asg_json=$(aws autoscaling describe-auto-scaling-groups --region "$aws_region" --auto-scaling-group-names "$asg_name")
+  echo "$asg_json" | jq -r '.AutoScalingGroups[0].DesiredCapacity'
+}
+
+function get_cluster_size() {
+  local -r instance_tags="$1"
+  local -r aws_region="${EC2_INSTANCE_REGION}"
+
+  local asg_name=""
+  asg_name=$(get_tag_value "$instance_tags" "$AWS_ASG_TAG_KEY")
+  if [[ -z "$asg_name" ]]; then
+    log_warn "This EC2 Instance does not appear to be part of an Auto Scaling Group, so cannot determine cluster size. Setting cluster size to 1."
+    echo 1
+  else
+    get_asg_size "$asg_name"
+  fi
+}
+
+# Get the value for a specific tag from the tags JSON returned by the AWS describe-tags:
+# https://docs.aws.amazon.com/cli/latest/reference/ec2/describe-tags.html
+function get_tag_value() {
+  local -r tags="$1"
+  local -r tag_key="$2"
+
+  echo "$tags" | jq -r ".Tags[] | select(.Key == \"$tag_key\") | .Value"
+}
+
+function get_object() {
+  local -r secrets_bucket_name="$1"
+  local -r source="$2"
+  local -r target="$3"
+  local -r user="$4"
+
+  local -r key="${EC2_INSTANCE_REGION}/${source}"
+
+  log_info "Downloading ${key}"
+
+  aws s3api get-object \
+    --bucket "${secrets_bucket_name}" \
+    --key "${key}" \
+    "${target}" > /dev/null || exit 1
+
+  chown "${user}:${user}" "${target}"
+}
+
+function get_object_value() {
+  local -r secrets_bucket_name="$1"
+  local -r source="$2"
+
+  local -r key="${EC2_INSTANCE_REGION}/${source}"
+
+  log_info "Downloading ${key}"
+
+  aws s3 cp --quiet \
+    "s3://${secrets_bucket_name}/${key}" /dev/stdout || exit 1
+}
+
+function assert_is_installed() {
+  local -r name="$1"
+
+  if [[ ! $(command -v "${name}") ]]; then
+    log_error "The binary '$name' is required by this script but is not installed or in the system's PATH."
+    exit 1
+  fi
+}
+
+function address_type() {
+  local -r ipv6="${1}"
+  local type
+
+  if [[ "$ipv6" == "true" ]]; then
+    type="ipv6"
+  else
+    type="ipv4"
+  fi
+
+  echo "${type}"
+}
+
+function get_address() {
+  local -r ipv6="${1}"
+  local -r interface="${2}"
+
+  local type
+  local variable_reference
+
+  type="$(address_type "${ipv6}")"
+
+  variable_reference="EC2_INSTANCE_${interface^^}_${type^^}_ADDRESS"
+
+  # if [[ "${server}" == "false" && -v "EC2_INSTANCE_${interface^^}_${type^^}_PREFIX_ADDRESS" ]]
+  # then
+  #   variable_reference="EC2_INSTANCE_${interface^^}_${type^^}_PREFIX_ADDRESS"
+  # else
+  #   variable_reference="EC2_INSTANCE_${interface^^}_${type^^}_ADDRESS"
+  # fi
+
+  echo "${!variable_reference}"
+}
+
+function get_vpc_cidr() {
+  local -r ipv6="${1}"
+  local -r interface="${2}"
+
+  local type
+  local variable_reference
+
+  type="$(address_type "${ipv6}")"
+
+  variable_reference="EC2_INSTANCE_${interface^^}_${type^^}_VPC_CIDR"
+
+  echo "${!variable_reference}"
+}
+
+function generate_vault_config() {
+  umask 027
+
+  # General
+  local -r role="${1}"
+  local -r user="${2}"
+  local -r config_dir="${3}"
+  local -r ipv6="${4}"
+  local -r interface="${5}"
+  local -r ui_enabled="${6}"
+
+  # Raft
+  local -r data_dir="${7}"
+  local -r auto_join_tag_key="${8}"
+  local -r auto_join_tag_value="${9}"
+  local -r vault_ca_file_path="${10}"
+  local -r vault_cert_file_path="${11}"
+  local -r vault_key_file_path="${12}"
+
+  # Service Registration
+  local -r consul_ca_file_path="${13}"
+  local -r consul_cert_file_path="${14}"
+  local -r consul_key_file_path="${15}"
+  local -r consul_token="${16}"
+
+  # Seal
+  local -r kms_key_arn="${17}"
+
+  local -r config_path="$config_dir/$VAULT_CONFIG_FILE"
+  local instance_id="${EC2_INSTANCE_ID}"
+  local instance_region="${EC2_INSTANCE_REGION}"
+  local address
+  address="$(get_address "${ipv6}" "${interface}")"
+
+
+  local -r config=$(
+    cat << EOF
+{{ if bool ((ds "data").ipv6) }}
+api_addr = "https://[${address}]:8200"
+cluster_addr = "https://[${address}]:8201"
+{{ else }}
+api_addr = "https://${address}:8200"
+cluster_addr = "https://${address}:8201"
+{{ end }}
+disable_mlock = true
+disable_performance_standby = true
+ui = ${ui_enabled}
+
+listener "tcp" {
+  address = "[::1]:8200"
+  cluster_address = "[::1]:8201"
+
+  tls_cert_file = "${vault_cert_file_path}"
+  tls_client_ca_file = "${vault_ca_file_path}"
+  tls_key_file = "${vault_key_file_path}"
+
+  telemetry {
+    unauthenticated_metrics_access = true
+  }
+}
+
+listener "tcp" {
+  address = "127.0.0.1:8200"
+  cluster_address = "127.0.0.1:8201"
+
+  tls_cert_file = "${vault_cert_file_path}"
+  tls_client_ca_file = "${vault_ca_file_path}"
+  tls_key_file = "${vault_key_file_path}"
+
+  telemetry {
+    unauthenticated_metrics_access = true
+  }
+}
+
+listener "tcp" {
+  address = "${address}:8200"
+  cluster_address = "${address}:8201"
+
+  tls_cert_file = "${vault_cert_file_path}"
+  tls_client_ca_file = "${vault_ca_file_path}"
+  tls_key_file = "${vault_key_file_path}"
+}
+
+storage "raft" {
+  path    = "${data_dir}"
+  node_id = "${instance_id}"
+
+  retry_join {
+{{ if bool ((ds "data").ipv6) }}
+    auto_join = "provider=aws addr_type=private_v6 region=${instance_region} tag_key=$auto_join_tag_key tag_value=$auto_join_tag_value"
+{{ else }}
+    auto_join = "provider=aws addr_type=private_v4 region=${instance_region} tag_key=$auto_join_tag_key tag_value=$auto_join_tag_value"
+{{ end }}
+    auto_join_scheme = "https"
+    leader_tls_servername = "server.${instance_region}.vault"
+    leader_ca_cert_file = "${vault_ca_file_path}"
+    leader_client_cert_file = "${vault_cert_file_path}"
+    leader_client_key_file = "${vault_key_file_path}"
+  }
+}
+
+seal "awskms" {
+  region     = "${instance_region}"
+  kms_key_id = "${kms_key_arn}"
+}
+
+service_registration "consul" {
+  address = "[::1]:8501"
+  scheme = "https"
+  token = "${consul_token}"
+  tls_ca_file = "${consul_ca_file_path}"
+  tls_cert_file = "${consul_cert_file_path}"
+  tls_key_file = "${consul_key_file_path}"
+}
+
+telemetry {
+  prometheus_retention_time = "24h"
+  disable_hostname = true
+}
+
+EOF
+  )
+
+  echo "{ \"server\": ${server}, \"ipv6\": ${ipv6} }" | gomplate \
+    -i "${config}" -d data=stdin:///data.json > "${config_path}"
+
+  chown "${user}:${user}" "${config_path}"
+  chmod 600 "${config_path}"
+}
+
+function generate_systemd_config() {
+  umask 022
+
+  local -r role="$1"
+  local -r vault_config_dir="$2"
+  local -r vault_bin_dir="$3"
+  local -r vault_user="$4"
+
+  local -r config_path="$vault_config_dir/$VAULT_CONFIG_FILE"
+  local -r systemd_config_path="${VAULT_SYSTEMD_CONFIG_PATH}"
+
+  log_info "Creating systemd config file to run vault in $systemd_config_path"
+
+  local -r unit_config=$(
+    cat << EOF
+[Unit]
+Description="HashiCorp Vault - A tool for managing secrets"
+Documentation=https://www.vault.io/
+After=consul-online.target
+After=ferm.service
+After=network-online.target
+Wants=consul-online.target
+Wants=ferm.service
+Wants=network-online.target
+ConditionFileNotEmpty=$config_path
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+EOF
+  )
+
+  local -r service_config=$(
+    cat << EOF
+[Service]
+Type=notify
+Group=$vault_user
+User=$vault_user
+ExecStart=$vault_bin_dir/vault server -config=$config_path
+ExecReload=/bin/kill --signal HUP \$MAINPID
+AmbientCapabilities=CAP_IPC_LOCK
+CapabilityBoundingSet=CAP_SYSLOG CAP_IPC_LOCK
+KillMode=process
+KillSignal=SIGINT
+LimitMEMLOCK=infinity
+LimitNOFILE=65536
+NoNewPrivileges=yes
+PrivateDevices=yes
+PrivateTmp=yes
+ProtectHome=read-only
+ProtectSystem=full
+Restart=on-failure
+RestartSec=5
+SecureBits=keep-caps
+SyslogIdentifier=vault
+TimeoutStopSec=30
+
+EOF
+  )
+
+  local -r install_config=$(
+    cat << EOF
+[Install]
+WantedBy=multi-user.target
+EOF
+  )
+
+  echo -e "$unit_config" > "$systemd_config_path"
+  echo -e "$service_config" >> "$systemd_config_path"
+  echo -e "$install_config" >> "$systemd_config_path"
+
+#   if [[ "$server" == "true" ]]; then
+#     log_info "Creating systemd bootstrap config file ${VAULT_BOOTSTRAP_SYSTEMD_CONFIG_PATH}"
+#
+#     local -r bootstrap_config=$(
+#       cat << EOF
+# [Service]
+# Environment='VAULT_SECRETS_BUCKET_NAME=${secrets_bucket_name}'
+#
+# EOF
+#     )
+#     echo -e "$bootstrap_config" > "${VAULT_BOOTSTRAP_SYSTEMD_CONFIG_PATH}"
+#   fi
+}
+
+function generate_ferm_config() {
+  log_info "Writing ferm configuration"
+
+  local server="$1"
+  local ipv6="$2"
+  local interface="$3"
+
+  local template_path="/etc/ferm/ferm.d/1010-vault.conf"
+
+  local address
+  local domain
+  local vpc_cidr
+
+  if [[ "$ipv6" == "true" ]]; then
+    domain="ip6"
+  else
+    domain="ip"
+  fi
+
+  address="$(get_address "${ipv6}" "${interface}")"
+  vpc_cidr="$(get_vpc_cidr "${ipv6}" "${interface}")"
+
+  local -r template=$(
+    cat << EOF
+domain (ip ip6) table filter {
+  chain OUTPUT {
+    daddr (169.254.169.254 fd00:ec2::254) proto tcp mod owner uid-owner "vault" ACCEPT;
+  }
+}
+
+domain ({{ (ds "data").domain }}) table filter chain INPUT saddr {{ (ds "data").vpc_cidr }} daddr {{ (ds "data").address }} {
+  proto tcp dport 8200 ACCEPT;
+}
+
+{{ if bool ((ds "data").server) }}
+domain ({{ (ds "data").domain }}) table filter chain INPUT saddr {{ (ds "data").vpc_cidr }} daddr {{ (ds "data").address }} {
+  proto tcp dport 8201 ACCEPT;
+}
+{{ end }}
+EOF
+  )
+
+  echo "{ \"server\": ${server}, \"domain\": \"${domain}\", \"address\": \"${address}\", \"vpc_cidr\": \"${vpc_cidr}\" }" | jq '.' | gomplate \
+    -i "${template}" -d data=stdin:///data.json > "${template_path}"
+
+  chown root:root "${template_path}"
+  chmod 600 "${template_path}"
+}
+
+function start_vault() {
+  log_info "Reloading systemd config and starting Consul"
+
+  sudo systemctl daemon-reload
+  # sudo systemctl enable consul-online.target
+  # sudo systemctl restart ferm consul-online.target
+
+  sudo systemctl enable vault
+  sudo systemctl restart ferm vault
+}
+
+# Based on: http://unix.stackexchange.com/a/7732/215969
+function get_owner_of_path() {
+  local -r path="$1"
+  ls -ld "$path" | awk '{print $3}'
+}
+
+function trust-ca() {
+  local -r source="${1}"
+  local name
+
+  name="$(basename "${source}")"
+
+  local -r path="/etc/pki/ca-trust/source/anchors/${name}"
+
+  cp -f "${source}" "${path}"
+  chown root:root "${path}"
+  chmod 644 "${path}"
+
+  update-ca-trust
+}
+
+function run() {
+  umask 027
+
+  if [[ ! -f "/etc/sysconfig/ec2-environment" ]]; then
+    print_usage
+
+    log_error "/etc/sysconfig/ec2-environment: No such file"
+
+    exit 1
+  fi
+
+  set -o allexport
+  source "/etc/sysconfig/ec2-environment"
+  set +o allexport
+
+  local role=""
+  local server="false"
+  local auto_join_tag_key=""
+  local auto_join_tag_value=""
+  local secrets_bucket_name=""
+  local ui_enabled="false"
+  local ipv6="false"
+  local interface="eth0"
+  local kms_key_arn=""
+
+  while [[ $# -gt 0 ]]; do
+    local key="$1"
+
+    case "$key" in
+      --role)
+        assert_not_empty "$key" "$2"
+        role="$2"
+        shift
+        ;;
+      --auto-join-tag-key)
+        assert_not_empty "$key" "$2"
+        auto_join_tag_key="$2"
+        shift
+        ;;
+      --auto-join-tag-value)
+        assert_not_empty "$key" "$2"
+        auto_join_tag_value="$2"
+        shift
+        ;;
+      --secrets-bucket-name)
+        assert_not_empty "$key" "$2"
+        secrets_bucket_name="$2"
+        shift
+        ;;
+      --kms-key-arn)
+        assert_not_empty "$key" "$2"
+        kms_key_arn="$2"
+        shift
+        ;;
+      --ui)
+        ui_enabled="true"
+        ;;
+      --ipv6)
+        ipv6="true"
+        ;;
+      --interface)
+        assert_not_empty "$key" "$2"
+        interface="$2"
+        shift
+        ;;
+      --help)
+        print_usage
+        exit
+        ;;
+      *)
+        log_error "Unrecognized argument: $key"
+        print_usage
+        exit 1
+        ;;
+    esac
+
+    shift
+  done
+
+  assert_not_empty "--role" "$role"
+  assert_not_empty "--secrets-bucket-name" "$secrets_bucket_name"
+  assert_not_empty "--auto-join-tag-key" "$auto_join_tag_key"
+  assert_not_empty "--auto-join-tag-value" "$auto_join_tag_value"
+  assert_not_empty "--kms-key-arn" "$kms_key_arn"
+
+  if [[ "$role" == "server" ]]; then
+    server="true"
+  elif [[ "$role" == "client" ]]; then
+    server="false"
+  elif [[ "$role" == "bastion" ]]; then
+    server="false"
+  else
+    log_error "Unrecognized value for the --role flag."
+    exit 1
+  fi
+
+  assert_is_installed "systemctl"
+  assert_is_installed "aws"
+  assert_is_installed "curl"
+  assert_is_installed "jq"
+  assert_is_installed "gomplate"
+  assert_is_installed "update-ca-trust"
+
+  local config_dir
+  local data_dir
+  local bin_dir
+  local user
+
+  config_dir=$(cd "$SCRIPT_DIR/../config" && pwd)
+  data_dir=$(cd "$SCRIPT_DIR/../data" && pwd)
+  bin_dir=$(cd "$SCRIPT_DIR/../bin" && pwd)
+  user=$(get_owner_of_path "$config_dir")
+
+  local type
+
+  if [[ "$server" == "true" ]]; then
+    type="server"
+  else
+    type="client"
+  fi
+
+  local tls_path
+  local tls_ca_path
+
+  tls_path="$(cd "$SCRIPT_DIR/../tls" && pwd)"
+  tls_ca_path="$(cd "$SCRIPT_DIR/../tls/ca" && pwd)"
+
+  local vault_ca_file_path="${tls_ca_path}/vault-ca.pem"
+  local vault_cert_file_path="${tls_path}/vault-${type}.pem"
+  local vault_key_file_path="${tls_path}/vault-${type}-key.pem"
+
+  local consul_ca_file_path="${tls_ca_path}/consul-ca.pem"
+  local consul_cert_file_path="${tls_path}/consul-vault.pem"
+  local consul_key_file_path="${tls_path}/consul-vault-key.pem"
+
+  get_object "${secrets_bucket_name}" \
+    "${role}/vault/vault-ca.pem" \
+    "${vault_ca_file_path}" \
+    "${user}"
+
+  get_object "${secrets_bucket_name}" \
+    "${role}/vault/vault-${type}.pem" \
+    "${vault_cert_file_path}" \
+    "${user}"
+
+  get_object "${secrets_bucket_name}" \
+    "${role}/vault/vault-${type}-key.pem" \
+    "${vault_key_file_path}" \
+    "${user}"
+
+  get_object "${secrets_bucket_name}" \
+    "${role}/vault/consul-ca.pem" \
+    "${consul_ca_file_path}" \
+    "${user}"
+
+  get_object "${secrets_bucket_name}" \
+    "${role}/vault/consul-vault.pem" \
+    "${consul_cert_file_path}" \
+    "${user}"
+
+  get_object "${secrets_bucket_name}" \
+    "${role}/vault/consul-vault-key.pem" \
+    "${consul_key_file_path}" \
+    "${user}"
+
+  local consul_token
+
+  consul_token="$(get_object_value "${secrets_bucket_name}" "${role}/vault/consul-acl-token-vault-service-registration")"
+
+  generate_vault_config \
+    "${role}" \
+    "${user}" \
+    "${config_dir}" \
+    "${ipv6}" \
+    "${interface}" \
+    "${ui_enabled}" \
+    "${data_dir}" \
+    "${auto_join_tag_key}" \
+    "${auto_join_tag_value}" \
+    "${vault_ca_file_path}" \
+    "${vault_cert_file_path}" \
+    "${vault_key_file_path}" \
+    "${consul_ca_file_path}" \
+    "${consul_cert_file_path}" \
+    "${consul_key_file_path}" \
+    "${consul_token}" \
+    "${kms_key_arn}"
+
+  generate_systemd_config \
+    "$role" \
+    "$config_dir" \
+    "$bin_dir" \
+    "$user"
+
+  generate_ferm_config \
+    "$server" \
+    "$ipv6" \
+    "$interface"
+
+  trust-ca "$vault_ca_file_path"
+
+  start_vault
+}
+
+run "$@"

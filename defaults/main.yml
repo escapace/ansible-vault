@@ -1,0 +1,12 @@
+---
+
+vault_version: "1.10.3"
+# vault_server: false
+
+vault_volume: true
+vault_volume_size: 35%VG
+vault_volume_name: vault
+vault_volume_fs_type: "xfs"
+vault_volume_mount: /opt/vault/data
+
+vault_role_debug: false
