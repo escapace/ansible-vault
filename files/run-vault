@@ -571,7 +571,7 @@ function start_vault() {
 
   sudo systemctl daemon-reload
   sudo systemctl enable vault-online.target
-  sudo systemctl restart ferm vault-online.target
+  sudo systemctl --no-block restart ferm vault-online.target
 }
 
 # Based on: http://unix.stackexchange.com/a/7732/215969
