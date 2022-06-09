@@ -49,6 +49,7 @@
     - "{{ vault_dir }}/tls"
     - "{{ vault_dir }}/tls/ca"
     - "{{ vault_dir }}/plugins"
+    - "{{ vault_dir }}/policy"
 
 - name: check vault version
   ansible.builtin.slurp:
@@ -130,6 +131,26 @@
     group: vault
   tags:
     - run-vault
+
+- name: copy vault-online script
+  ansible.builtin.copy:
+    src: files/vault-online
+    dest: "{{ vault_bin_dir }}/vault-online"
+    mode: 0770
+    owner: vault
+    group: vault
+  tags:
+    - run-vault
+
+- name: copy run-vault-setup script
+  ansible.builtin.copy:
+    src: files/run-vault-setup
+    dest: "{{ vault_bin_dir }}/run-vault-setup"
+    mode: 0770
+    owner: vault
+    group: vault
+  tags:
+    - run-vault-setup
 
 - name: prevent core dumps
   ansible.posix.sysctl:
