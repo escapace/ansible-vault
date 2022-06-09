@@ -1,0 +1,106 @@
+#!/bin/bash
+
+set -e
+set -u
+set -o pipefail
+
+if [[ -z "${VAULT_SECRETS_BUCKET_NAME}" ]]; then
+  log_error "VAULT_SECRETS_BUCKET_NAME not set"
+
+  exit 1
+fi
+
+if [[ -z "${VAULT_ADDR}" ]]; then
+  log_error "VAULT_ADDR not set"
+
+  exit 1
+fi
+
+if [[ -z "${VAULT_ROLE}" ]]; then
+  log_error "VAULT_ROLE not set"
+
+  exit 1
+fi
+
+set -o allexport
+source "/etc/sysconfig/ec2-environment"
+set +o allexport
+
+SCRIPT_NAME="$(basename "$0")"
+
+function log() {
+  local -r level="$1"
+  local -r message="$2"
+  local -r timestamp=$(date +"%Y-%m-%d %H:%M:%S")
+  echo >&2 -e "${timestamp} [${level}] [$SCRIPT_NAME] ${message}"
+}
+
+function log_info() {
+  local -r message="$1"
+  log "INFO" "$message"
+}
+
+function get_object_value() {
+  local -r source="$1"
+
+  local -r key="${EC2_INSTANCE_REGION}/${VAULT_ROLE}/${source}"
+
+  log_info "Downloading ${key}"
+
+  aws s3 cp --quiet \
+    "s3://${VAULT_SECRETS_BUCKET_NAME}/${key}" /dev/stdout || exit 1
+}
+
+function vault_token() {
+  VAULT_TOKEN="$(get_object_value "vault/vault-token-vault-online")"
+
+  export VAULT_TOKEN
+}
+
+function vault_check_kv() {
+  local value
+
+  value="$(vault kv get -format json "kv/infrastructure/vault/online" | jq -r '.data.data.value')"
+
+  if [[ "${value}" == "true" ]]
+  then
+    return 0
+  else
+    return 1
+  fi
+}
+
+function vault_check_initialized() {
+  local value
+
+  value="$(vault status -format json | jq -r '.initialized')"
+
+  if [[ "${value}" == "true" ]]
+  then
+    return 0
+  else
+    return 1
+  fi
+}
+
+function vault_check_unsealed() {
+  local value
+
+  value="$(vault status -format json  | jq -r '.sealed')"
+
+  if [[ "${value}" == "false" ]]
+  then
+    return 0
+  else
+    return 1
+  fi
+}
+
+function vault_online() {
+  vault_token
+  vault_check_initialized
+  vault_check_unsealed
+  vault_check_kv
+}
+
+vault_online

@@ -86,10 +86,6 @@ function print_usage() {
     echo -e "--ipv6|Use IPv6."
   )"
   echo
-  echo "Example:"
-  echo
-  echo "  $SCRIPT_NAME --server"
-  echo
 }
 
 function log() {
@@ -416,6 +412,7 @@ function generate_systemd_config() {
   local -r vault_config_dir="$2"
   local -r vault_bin_dir="$3"
   local -r vault_user="$4"
+  local -r secrets_bucket_name="$5"
 
   local -r config_path="$vault_config_dir/$VAULT_CONFIG_FILE"
   local -r systemd_config_path="${VAULT_SYSTEMD_CONFIG_PATH}"
@@ -479,18 +476,45 @@ EOF
   echo -e "$service_config" >> "$systemd_config_path"
   echo -e "$install_config" >> "$systemd_config_path"
 
-#   if [[ "$server" == "true" ]]; then
-#     log_info "Creating systemd bootstrap config file ${VAULT_BOOTSTRAP_SYSTEMD_CONFIG_PATH}"
-#
-#     local -r bootstrap_config=$(
-#       cat << EOF
-# [Service]
-# Environment='VAULT_SECRETS_BUCKET_NAME=${secrets_bucket_name}'
-#
-# EOF
-#     )
-#     echo -e "$bootstrap_config" > "${VAULT_BOOTSTRAP_SYSTEMD_CONFIG_PATH}"
-#   fi
+  local -r vault_online_service=$(
+    cat << EOF
+[Unit]
+Description="Vault Online"
+ConditionFileNotEmpty=$config_path
+Requires=vault.service
+After=vault.service
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=vault
+Group=vault
+ExecStart=retry /opt/vault/bin/vault-online
+Environment=RETRY_MAX_ATTEMPTS=0
+Environment='VAULT_SECRETS_BUCKET_NAME=${secrets_bucket_name}'
+Environment='VAULT_ADDR=https://[::1]:8200'
+Environment='VAULT_ROLE=${role}'
+EOF
+  )
+
+  echo -e "$vault_online_service" > "/usr/lib/systemd/system/vault-online.service"
+
+  local -r vault_online_target=$(
+    cat << EOF
+[Unit]
+Description="Vault Online"
+Requires=vault-online.service
+After=vault-online.service
+Requires=vault.service
+After=vault.service
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  )
+
+  echo -e "$vault_online_target" > "/usr/lib/systemd/system/vault-online.target"
 }
 
 function generate_ferm_config() {
@@ -543,14 +567,11 @@ EOF
 }
 
 function start_vault() {
-  log_info "Reloading systemd config and starting Consul"
+  log_info "Reloading systemd config and starting Vault"
 
   sudo systemctl daemon-reload
-  # sudo systemctl enable consul-online.target
-  # sudo systemctl restart ferm consul-online.target
-
-  sudo systemctl enable vault
-  sudo systemctl restart ferm vault
+  sudo systemctl enable vault-online.target
+  sudo systemctl restart ferm vault-online.target
 }
 
 # Based on: http://unix.stackexchange.com/a/7732/215969
@@ -766,7 +787,8 @@ function run() {
     "$role" \
     "$config_dir" \
     "$bin_dir" \
-    "$user"
+    "$user" \
+    "$secrets_bucket_name"
 
   generate_ferm_config \
     "$server" \

@@ -1,0 +1,363 @@
+#!/bin/bash
+# This script is used to configure and run Vault on an AWS server.
+
+set -e
+set -u
+set -o pipefail
+
+umask 027
+
+SCRIPT_DIR=
+SCRIPT_NAME=
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_NAME="$(basename "$0")"
+
+VAULT_POLICY_DIR=
+VAULT_POLICY_DIR="$(cd "$SCRIPT_DIR/../policy" && pwd)"
+
+SECRETS_BUCKET_NAME=""
+ROLE="server"
+
+export VAULT_ADDR="https://[::1]:8200"
+
+function wrap() {
+  local strings="${1}"
+
+  local length
+  local cols
+  local width
+
+  length="$(echo -n "${strings}" | awk -F '|' '{print $1}' | awk '{ print length }' | sort -n | tail -1)"
+  cols="$(tput cols)"
+
+  if [[ $(((cols - 4) / length)) -ge 2 ]]; then
+    if [[ $((cols - length - 4)) -ge 80 ]]; then
+      width=80
+    else
+      width=$((cols - length - 4))
+    fi
+
+    echo -e "${strings}" \
+      | fold -s -w "${width}" \
+      | sed -e "/--/! s|^| \||g" \
+      | column -t -s '|' \
+      | sed 's/^/  /'
+  else
+    local lines
+    local line
+    readarray -t lines <<< "${strings}"
+    local option
+    local description
+
+    if [[ "${cols}" -ge 80 ]]; then
+      width="78"
+    else
+      width=$((cols - 2))
+    fi
+
+    for line in "${lines[@]}"; do
+      option="${line%%|*}"
+      description=${line#*|}
+
+      echo "${option}"
+      echo
+      echo "${description}" | fold -s -w "${width}" | sed 's/^/  /'
+      echo
+    done
+  fi
+}
+
+function print_usage() {
+  echo
+  echo "Usage: $SCRIPT_NAME [OPTIONS]"
+  echo
+  echo "This script is used to configure and run Vault on an AWS server."
+  echo
+  echo "Options:"
+  echo
+
+  wrap "$(
+    echo -e "--role|The instance role, one of \"server\", \"client\" or \"bastion\"."
+    echo -e "--secrets-bucket-name|AWS S3 secrets bucket name."
+  )"
+  echo
+  echo "Example:"
+  echo
+  echo "  $SCRIPT_NAME --server"
+  echo
+}
+
+function log() {
+  local -r level="$1"
+  local -r message="$2"
+  local -r timestamp=$(date +"%Y-%m-%d %H:%M:%S")
+  echo >&2 -e "${timestamp} [${level}] [$SCRIPT_NAME] ${message}"
+}
+
+function log_info() {
+  local -r message="$1"
+  log "INFO" "$message"
+}
+
+function log_warn() {
+  local -r message="$1"
+  log "WARN" "$message"
+}
+
+function log_error() {
+  local -r message="$1"
+  log "ERROR" "$message"
+}
+
+function get_owner_of_path() {
+  local -r path="$1"
+  ls -ld "$path" | awk '{print $3}'
+}
+
+function get_object() {
+  local -r source="$1"
+  local -r target="$2"
+  local user
+
+  user="$(get_owner_of_path "${SCRIPT_DIR}")"
+
+  local -r key="${EC2_INSTANCE_REGION}/${source}"
+
+  log_info "Downloading ${key}"
+
+  aws s3api get-object \
+    --bucket "${SECRETS_BUCKET_NAME}" \
+    --key "${key}" \
+    "${target}" > /dev/null || exit 1
+
+  chown "${user}:${user}" "${target}"
+}
+
+function get_object_value() {
+  local -r source="$1"
+
+  local -r key="${EC2_INSTANCE_REGION}/${source}"
+
+  log_info "Downloading ${key}"
+
+  aws s3 cp --quiet \
+    "s3://${SECRETS_BUCKET_NAME}/${key}" /dev/stdout || exit 1
+}
+
+function assert_not_empty() {
+  local -r arg_name="$1"
+  local -r arg_value="$2"
+
+  if [[ -z "$arg_value" ]]; then
+    log_error "The value for '$arg_name' cannot be empty"
+    print_usage
+    exit 1
+  fi
+}
+
+function assert_is_installed() {
+  local -r name="$1"
+
+  if [[ ! $(command -v "${name}") ]]; then
+    log_error "The binary '$name' is required by this script but is not installed or in the system's PATH."
+    exit 1
+  fi
+}
+
+function policy_exists() {
+  local name="${1}"
+
+  local value
+  value="$(vault policy list -format=json | jq -r ". | any(. == \"${name}\")")"
+
+  if [[ "${value}" == "true" ]]; then
+    return 0
+  else
+    return 1
+  fi
+}
+
+function policy_write() {
+  local name="${1}"
+
+  if policy_exists "${name}"; then
+    log_warn "policy ${name} already exists"
+  else
+    get_object \
+      "${ROLE}/vault/vault-policy-${name}.hcl" \
+      "${VAULT_POLICY_DIR}/${name}.hcl"
+
+    vault policy write "${name}" "${VAULT_POLICY_DIR}/${name}.hcl"
+  fi
+}
+
+function token_role_exists() {
+  local name="${1}"
+
+  local value
+  value="$(vault list -format=json /auth/token/roles | jq -r ". | any(. == \"${name}\")")"
+
+  if [[ "${value}" == "true" ]]; then
+    return 0
+  else
+    return 1
+  fi
+}
+
+function token_role_write() {
+  local name="${1}"
+
+  if token_role_exists "${name}"; then
+    log_warn "token role ${name} already exists"
+  else
+    get_object_value \
+      "${ROLE}/vault/vault-token-role-${name}.json" | vault write "/auth/token/roles/${name}" -
+  fi
+}
+
+function secrets_engine_exits() {
+  local name="${1}"
+
+  local value
+  value="$(vault secrets list -format=json | jq -r ". | keys | any(. == \"${name}/\")")"
+
+  if [[ "${value}" == "true" ]]; then
+    return 0
+  else
+    return 1
+  fi
+}
+
+function token_exists() {
+  local id="${1}"
+
+  vault token lookup -format=json "${id}" &> /dev/null || return 1
+}
+
+function token_write() {
+  local name="${1}"
+  local id
+
+  shift
+
+  id="$(get_object_value "${ROLE}/vault/vault-token-${name}")"
+
+  if token_exists "${id}"; then
+    log_warn "token ${name} already exists"
+  else
+    vault token create -id "${id}" "${@}" &> /dev/null
+  fi
+}
+
+function kv_exists() {
+  local path="${1}"
+
+  vault kv get "${path}" &> /dev/null || return 1
+}
+
+function kv_write() {
+  local path="${1}"
+
+  shift
+
+  if kv_exists "${path}"
+  then
+    log_warn "kv ${path} already exists"
+  else
+    vault kv put "${path}" "${@}" &> /dev/null
+  fi
+}
+
+function run() {
+  umask 027
+
+  if [[ ! -f "/etc/sysconfig/ec2-environment" ]]; then
+    print_usage
+
+    log_error "/etc/sysconfig/ec2-environment: No such file"
+
+    exit 1
+  fi
+
+  set -o allexport
+  source "/etc/sysconfig/ec2-environment"
+  set +o allexport
+
+  while [[ $# -gt 0 ]]; do
+    local key="$1"
+
+    case "$key" in
+      --role)
+        assert_not_empty "$key" "$2"
+        ROLE="$2"
+        shift
+        ;;
+      --secrets-bucket-name)
+        assert_not_empty "$key" "$2"
+        SECRETS_BUCKET_NAME="$2"
+        shift
+        ;;
+      --help)
+        print_usage
+        exit
+        ;;
+      *)
+        log_error "Unrecognized argument: $key"
+        print_usage
+        exit 1
+        ;;
+    esac
+
+    shift
+  done
+
+  assert_is_installed "vault"
+  assert_is_installed "curl"
+  assert_is_installed "jq"
+
+  assert_not_empty "--secrets-bucket-name" "$SECRETS_BUCKET_NAME"
+
+  local tls_path
+  local tls_ca_path
+
+  tls_path="$(cd "$SCRIPT_DIR/../tls" && pwd)"
+  tls_ca_path="$(cd "$SCRIPT_DIR/../tls/ca" && pwd)"
+
+  if [[ -z "${VAULT_TOKEN}" ]]; then
+    log_error "VAULT_TOKEN not set"
+
+    exit 1
+  fi
+
+  if ! secrets_engine_exits "kv"; then
+    vault secrets enable -version=2 kv
+  fi
+
+  if ! secrets_engine_exits "consul"; then
+    vault secrets enable consul
+
+    local consul_ca_file_path="${tls_ca_path}/consul-ca.pem"
+    local consul_cert_file_path="${tls_path}/consul-vault.pem"
+    local consul_key_file_path="${tls_path}/consul-vault-key.pem"
+
+    vault write consul/config/access \
+      address="[::1]:8501" \
+      scheme="https" \
+      ca_cert="@${consul_ca_file_path}" \
+      client_cert="@${consul_cert_file_path}" \
+      client_key="@${consul_key_file_path}" \
+      token="$(get_object_value "${ROLE}/vault/consul-acl-token-vault-consul-secrets-engine")"
+  fi
+
+  policy_write "nomad-server"
+  policy_write "vault-online"
+
+  token_role_write "nomad-cluster"
+
+  token_write "nomad-server" -policy "nomad-server" -period 72h -orphan
+  token_write "vault-online" -policy "vault-online"
+
+  kv_write "kv/infrastructure/vault/online" value=true
+}
+
+run "$@"
