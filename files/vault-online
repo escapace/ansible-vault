@@ -55,6 +55,8 @@ function vault_token() {
   VAULT_TOKEN="$(get_object_value "vault/vault-token-vault-online")"
 
   export VAULT_TOKEN
+
+  vault token renew &> /dev/null || exit 1
 }
 
 function vault_check_kv() {
