@@ -515,6 +515,21 @@ EOF
   )
 
   echo -e "$vault_online_target" > "/usr/lib/systemd/system/vault-online.target"
+
+  local -r vault_online_timer=$(
+    cat << EOF
+[Timer]
+OnUnitActiveSec=1d
+RandomizedDelaySec=30m
+FixedRandomDelay=true
+Unit=vault-online.service
+
+[Install]
+WantedBy=timers.target
+EOF
+  )
+
+  echo -e "$vault_online_timer" > "/usr/lib/systemd/system/vault-online.timer"
 }
 
 function generate_ferm_config() {
@@ -570,8 +585,8 @@ function start_vault() {
   log_info "Reloading systemd config and starting Vault"
 
   sudo systemctl daemon-reload
-  sudo systemctl enable vault-online.target
-  sudo systemctl --no-block restart ferm vault-online.target
+  sudo systemctl enable vault-online.target vault-online.timer
+  sudo systemctl --no-block restart ferm vault-online.target vault-online.timer
 }
 
 # Based on: http://unix.stackexchange.com/a/7732/215969

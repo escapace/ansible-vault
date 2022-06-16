@@ -329,6 +329,8 @@ function run() {
     exit 1
   fi
 
+  vault write sys/auth/token/tune default_lease_ttl=8h max_lease_ttl=4380h
+
   if ! secrets_engine_exits "kv"; then
     vault secrets enable -version=2 kv
   fi
@@ -347,7 +349,11 @@ function run() {
       client_cert="@${consul_cert_file_path}" \
       client_key="@${consul_key_file_path}" \
       token="$(get_object_value "${ROLE}/vault/consul-acl-token-vault-consul-secrets-engine")"
+
+    vault write consul/roles/operator policies=consul-operator ttl=3600 max_ttl=86400
   fi
+
+  # TODO: https://www.vaultproject.io/docs/secrets/nomad
 
   policy_write "nomad-server"
   policy_write "vault-online"
@@ -355,7 +361,7 @@ function run() {
   token_role_write "nomad-cluster"
 
   token_write "nomad-server" -policy "nomad-server" -period 72h -orphan
-  token_write "vault-online" -policy "vault-online"
+  token_write "vault-online" -policy "vault-online" -ttl=4380h
 
   kv_write "kv/infrastructure/vault/online" value=true
 }
