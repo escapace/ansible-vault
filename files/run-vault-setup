@@ -355,6 +355,39 @@ function run() {
 
   # TODO: https://www.vaultproject.io/docs/secrets/nomad
 
+  if ! secrets_engine_exits "aws"; then
+    vault secrets enable aws
+
+    vault write aws/config/lease lease=30m lease_max=1h
+
+    vault write aws/config/root \
+      region="${EC2_INSTANCE_REGION}" \
+      access_key="$(get_object_value "${ROLE}/vault/aws-access-key-id-vault-secrets-engine-aws")" \
+      secret_key="$(get_object_value "${ROLE}/vault/aws-secret-access-key-vault-secrets-engine-aws")"
+
+    vault write aws/roles/cloudfront-invalidation \
+      credential_type=iam_user \
+      permissions_boundary_arn="$(get_object_value "${ROLE}/vault/aws-arn-vault-secrets-engine-aws-permissions-boundary")" \
+      policy_arns=arn:aws:iam::aws:policy/CloudFrontReadOnlyAccess \
+      policy_document=-<<POLICY
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "CloudfrontInvalidations",
+      "Effect": "Allow",
+      "Action": [
+        "cloudfront:ListInvalidations",
+        "cloudfront:GetInvalidation",
+        "cloudfront:CreateInvalidation"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+POLICY
+  fi
+
   policy_write "nomad-server"
   policy_write "vault-online"
 
