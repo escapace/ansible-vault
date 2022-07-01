@@ -228,6 +228,19 @@ function secrets_engine_exits() {
   fi
 }
 
+function auth_method_exits() {
+  local name="${1}"
+
+  local value
+  value="$(vault auth list -format=json | jq -r ". | keys | any(. == \"${name}/\")")"
+
+  if [[ "${value}" == "true" ]]; then
+    return 0
+  else
+    return 1
+  fi
+}
+
 function token_exists() {
   local id="${1}"
 
@@ -386,6 +399,10 @@ function run() {
   ]
 }
 POLICY
+  fi
+
+  if ! auth_method_exits "approle"; then
+    vault auth enable approle
   fi
 
   policy_write "nomad-server"
