@@ -2,3 +2,7 @@
 
 skip_list:
   - command-instead-of-shell
+  - experimental
+  - ignore-errors
+  - no-changed-when
+  - schema
