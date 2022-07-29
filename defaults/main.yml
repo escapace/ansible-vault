@@ -1,6 +1,6 @@
 ---
 
-vault_version: "1.10.3"
+vault_version: "1.11.1"
 # vault_server: false
 
 vault_volume: true
