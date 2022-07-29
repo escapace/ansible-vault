@@ -309,7 +309,6 @@ function generate_vault_config() {
   local address
   address="$(get_address "${ipv6}" "${interface}")"
 
-
   local -r config=$(
     cat << EOF
 {{ if bool ((ds "data").ipv6) }}
