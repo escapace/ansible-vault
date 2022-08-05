@@ -251,13 +251,6 @@ function get_address() {
 
   variable_reference="EC2_INSTANCE_${interface^^}_${type^^}_ADDRESS"
 
-  # if [[ "${server}" == "false" && -v "EC2_INSTANCE_${interface^^}_${type^^}_PREFIX_ADDRESS" ]]
-  # then
-  #   variable_reference="EC2_INSTANCE_${interface^^}_${type^^}_PREFIX_ADDRESS"
-  # else
-  #   variable_reference="EC2_INSTANCE_${interface^^}_${type^^}_ADDRESS"
-  # fi
-
   echo "${!variable_reference}"
 }
 
@@ -311,7 +304,7 @@ function generate_vault_config() {
 
   local -r config=$(
     cat << EOF
-{{ if bool ((ds "data").ipv6) }}
+{{ if conv.ToBool ((ds "data").ipv6) }}
 api_addr = "https://[${address}]:8200"
 cluster_addr = "https://[${address}]:8201"
 {{ else }}
@@ -362,7 +355,7 @@ storage "raft" {
   node_id = "${instance_id}"
 
   retry_join {
-{{ if bool ((ds "data").ipv6) }}
+{{ if conv.ToBool ((ds "data").ipv6) }}
     auto_join = "provider=aws addr_type=private_v6 region=${instance_region} tag_key=$auto_join_tag_key tag_value=$auto_join_tag_value"
 {{ else }}
     auto_join = "provider=aws addr_type=private_v4 region=${instance_region} tag_key=$auto_join_tag_key tag_value=$auto_join_tag_value"
@@ -565,7 +558,7 @@ domain ({{ (ds "data").domain }}) table filter chain INPUT saddr {{ (ds "data").
   proto tcp dport 8200 ACCEPT;
 }
 
-{{ if bool ((ds "data").server) }}
+{{ if conv.ToBool ((ds "data").server) }}
 domain ({{ (ds "data").domain }}) table filter chain INPUT saddr {{ (ds "data").vpc_cidr }} daddr {{ (ds "data").address }} {
   proto tcp dport 8201 ACCEPT;
 }
