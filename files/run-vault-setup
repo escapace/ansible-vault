@@ -366,7 +366,32 @@ function run() {
     vault write consul/roles/operator policies=consul-operator ttl=3600 max_ttl=86400
   fi
 
-  # TODO: https://www.vaultproject.io/docs/secrets/nomad
+  if ! secrets_engine_exits "nomad"; then
+    local nomad_ca_file_path="${tls_ca_path}/nomad-ca.pem"
+    local nomad_cert_file_path="${tls_path}/nomad-vault.pem"
+    local nomad_key_file_path="${tls_path}/nomad-vault-key.pem"
+
+    get_object \
+      "${ROLE}/vault/nomad-ca.pem" \
+      "${nomad_ca_file_path}"
+
+    get_object \
+      "${ROLE}/vault/nomad-vault.pem" \
+      "${nomad_cert_file_path}"
+
+    get_object \
+      "${ROLE}/vault/nomad-vault-key.pem" \
+      "${nomad_key_file_path}" \
+
+    vault secrets enable nomad
+
+    vault write nomad/config/access \
+      address="https://[::1]:4646" \
+      ca_cert="@${nomad_ca_file_path}" \
+      client_cert="@${nomad_cert_file_path}" \
+      client_key="@${nomad_key_file_path}" \
+      token="$(get_object_value "${ROLE}/vault/nomad-acl-token-nomad-initial-management")"
+  fi
 
   if ! secrets_engine_exits "aws"; then
     local permissions_boundary_arn
