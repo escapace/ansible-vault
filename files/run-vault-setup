@@ -273,8 +273,7 @@ function kv_write() {
 
   shift
 
-  if kv_exists "${path}"
-  then
+  if kv_exists "${path}"; then
     log_warn "kv ${path} already exists"
   else
     vault kv put "${path}" "${@}" &> /dev/null
@@ -381,7 +380,7 @@ function run() {
 
     get_object \
       "${ROLE}/vault/nomad-vault-key.pem" \
-      "${nomad_key_file_path}" \
+      "${nomad_key_file_path}"
 
     vault secrets enable nomad
 
@@ -391,11 +390,13 @@ function run() {
       client_cert="@${nomad_cert_file_path}" \
       client_key="@${nomad_key_file_path}" \
       token="$(get_object_value "${ROLE}/vault/nomad-acl-token-nomad-initial-management")"
+
+    vault write nomad/role/operator policies=operator
   fi
 
   if ! secrets_engine_exits "aws"; then
     local permissions_boundary_arn
-    permissions_boundary_arn="$(get_object_value "${ROLE}/vault/aws-arn-vault-secrets-engine-aws-permissions-boundary")" \
+    permissions_boundary_arn="$(get_object_value "${ROLE}/vault/aws-arn-vault-secrets-engine-aws-permissions-boundary")"
 
     vault secrets enable aws
 
@@ -406,27 +407,27 @@ function run() {
       access_key="$(get_object_value "${ROLE}/vault/aws-access-key-id-vault-secrets-engine-aws")" \
       secret_key="$(get_object_value "${ROLE}/vault/aws-secret-access-key-vault-secrets-engine-aws")"
 
-    vault write aws/roles/cloudfront-invalidation \
-      credential_type=iam_user \
-      permissions_boundary_arn="${permissions_boundary_arn}" \
-      policy_arns=arn:aws:iam::aws:policy/CloudFrontReadOnlyAccess \
-      policy_document=-<<POLICY
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Sid": "CloudfrontInvalidations",
-      "Effect": "Allow",
-      "Action": [
-        "cloudfront:ListInvalidations",
-        "cloudfront:GetInvalidation",
-        "cloudfront:CreateInvalidation"
-      ],
-      "Resource": "*"
-    }
-  ]
-}
-POLICY
+    #     vault write aws/roles/cloudfront-invalidation \
+    #       credential_type=iam_user \
+    #       permissions_boundary_arn="${permissions_boundary_arn}" \
+    #       policy_arns=arn:aws:iam::aws:policy/CloudFrontReadOnlyAccess \
+    #       policy_document=-<<POLICY
+    # {
+    #   "Version": "2012-10-17",
+    #   "Statement": [
+    #     {
+    #       "Sid": "CloudfrontInvalidations",
+    #       "Effect": "Allow",
+    #       "Action": [
+    #         "cloudfront:ListInvalidations",
+    #         "cloudfront:GetInvalidation",
+    #         "cloudfront:CreateInvalidation"
+    #       ],
+    #       "Resource": "*"
+    #     }
+    #   ]
+    # }
+    # POLICY
 
     vault write aws/roles/operator \
       credential_type=iam_user \
@@ -445,17 +446,23 @@ POLICY
 POLICY
   fi
 
-  if ! auth_method_exits "approle"; then
-    vault auth enable approle
-  fi
-
   policy_write "nomad-server"
   policy_write "vault-online"
+  policy_write "operator"
 
   token_role_write "nomad-cluster"
 
   token_write "nomad-server" -policy "nomad-server" -period 72h -orphan
   token_write "vault-online" -policy "vault-online" -ttl=4380h
+
+  if ! auth_method_exits "approle"; then
+    vault auth enable approle
+
+    vault write auth/approle/role/operator \
+      token_policies="operator" \
+      token_ttl=2h \
+      token_max_ttl=4h
+  fi
 
   kv_write "kv/infrastructure/vault/online" value=true
 }
