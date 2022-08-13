@@ -384,6 +384,8 @@ function run() {
 
     vault secrets enable nomad
 
+    vault write nomad/config/lease ttl=3600 max_ttl=86400
+
     vault write nomad/config/access \
       address="https://[::1]:4646" \
       ca_cert="@${nomad_ca_file_path}" \
