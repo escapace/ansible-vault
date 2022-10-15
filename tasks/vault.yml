@@ -206,5 +206,5 @@
     group: root
     mode: 0644
 
-- include_tasks: storage-setup.yml
+- ansible.builtin.include_tasks: storage-setup.yml
   when: (storage_setup_physical_device is defined) and (storage_setup_physical_device | length > 0) and (vault_volume|bool)
