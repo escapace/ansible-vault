@@ -206,5 +206,8 @@
     group: root
     mode: 0644
 
+
+- ansible.builtin.include_tasks: vault-plugin-secrets-github.yml
+
 - ansible.builtin.include_tasks: storage-setup.yml
   when: (storage_setup_physical_device is defined) and (storage_setup_physical_device | length > 0) and (vault_volume|bool)

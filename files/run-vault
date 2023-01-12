@@ -311,7 +311,9 @@ cluster_addr = "https://[${address}]:8201"
 api_addr = "https://${address}:8200"
 cluster_addr = "https://${address}:8201"
 {{ end }}
-disable_mlock = true
+
+plugin_directory = "/opt/vault/plugins"
+disable_mlock = false
 disable_performance_standby = true
 ui = ${ui_enabled}
 
