@@ -1,6 +1,7 @@
 ---
 
 vault_version: "1.12.2"
+vault_plugin_secrets_github_version: "2.0.0"
 # vault_server: false
 
 vault_volume: true

@@ -466,6 +466,14 @@ POLICY
       token_max_ttl=4h
   fi
 
+  vault plugin register \
+    -sha256="$(sha256sum /opt/vault/plugins/vault-plugin-secrets-github | cut -d' ' -f1)" \
+    -command="vault-plugin-secrets-github" \
+    -args="-ca-cert=/opt/vault/tls/ca/vault-ca.pem" secret vault-plugin-secrets-github
+
+  vault secrets enable -path=github -plugin-name=vault-plugin-secrets-github plugin
+
+
   kv_write "kv/infrastructure/vault/online" value=true
 }
 

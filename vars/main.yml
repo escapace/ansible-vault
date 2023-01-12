@@ -17,3 +17,8 @@ vault_zip_url: "https://releases.hashicorp.com/vault/{{ vault_version }}/{{ vaul
 vault_checksum_file_url: "https://releases.hashicorp.com/vault/{{ vault_version }}/vault_{{ vault_version }}_SHA256SUMS"
 
 vault_volume_device: "/dev/{{ storage_setup_volume_group_name }}/{{ vault_volume_name }}"
+
+vault_plugin_secrets_github_checksum_file_url: "https://github.com/martinbaillie/vault-plugin-secrets-github/releases/download/v{{ vault_plugin_secrets_github_version }}/SHA256SUMS"
+# vault_plugin_secrets_github_sha256sums_sig: "https://github.com/martinbaillie/vault-plugin-secrets-github/releases/download/v{{ vault_plugin_secrets_github_version }}/SHA256SUMS.sig"
+vault_plugin_secrets_github_file: "vault-plugin-secrets-github-linux-{{ vault_architecture }}"
+vault_plugin_secrets_github_file_url: "https://github.com/martinbaillie/vault-plugin-secrets-github/releases/download/v{{ vault_plugin_secrets_github_version }}/{{ vault_plugin_secrets_github_file }}"
