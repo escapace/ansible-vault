@@ -409,28 +409,6 @@ function run() {
       access_key="$(get_object_value "${ROLE}/vault/aws-access-key-id-vault-secrets-engine-aws")" \
       secret_key="$(get_object_value "${ROLE}/vault/aws-secret-access-key-vault-secrets-engine-aws")"
 
-    #     vault write aws/roles/cloudfront-invalidation \
-    #       credential_type=iam_user \
-    #       permissions_boundary_arn="${permissions_boundary_arn}" \
-    #       policy_arns=arn:aws:iam::aws:policy/CloudFrontReadOnlyAccess \
-    #       policy_document=-<<POLICY
-    # {
-    #   "Version": "2012-10-17",
-    #   "Statement": [
-    #     {
-    #       "Sid": "CloudfrontInvalidations",
-    #       "Effect": "Allow",
-    #       "Action": [
-    #         "cloudfront:ListInvalidations",
-    #         "cloudfront:GetInvalidation",
-    #         "cloudfront:CreateInvalidation"
-    #       ],
-    #       "Resource": "*"
-    #     }
-    #   ]
-    # }
-    # POLICY
-
     vault write aws/roles/operator \
       credential_type=iam_user \
       permissions_boundary_arn="${permissions_boundary_arn}" \
@@ -473,8 +451,12 @@ POLICY
 
   vault secrets enable -path=github -plugin-name=vault-plugin-secrets-github plugin
 
-
   kv_write "kv/infrastructure/vault/online" value=true
+
+  curl --header "X-Vault-Token: ${VAULT_TOKEN}" \
+    --request POST \
+    --data '{"cleanup_dead_servers":true,"dead_server_last_contact_threshold":"12h0m0s","last_contact_threshold":"10s","max_trailing_logs":1000,"min_quorum":3,"server_stabilization_time":"10s"}' \
+    https://127.0.0.1:8200/v1/sys/storage/raft/autopilot/configuration
 }
 
 run "$@"
