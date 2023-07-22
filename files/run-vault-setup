@@ -341,7 +341,7 @@ function run() {
     exit 1
   fi
 
-  vault write sys/auth/token/tune default_lease_ttl=8h max_lease_ttl=4380h
+  vault write sys/auth/token/tune default_lease_ttl=8h max_lease_ttl=6480d
 
   if ! secrets_engine_exits "kv"; then
     vault secrets enable -version=2 kv
@@ -394,6 +394,7 @@ function run() {
       token="$(get_object_value "${ROLE}/vault/nomad-acl-token-nomad-initial-management")"
 
     vault write nomad/role/operator policies=operator
+    vault write nomad/role/lambda-client-scale-in policies=lambda-client-scale-in
   fi
 
   if ! secrets_engine_exits "aws"; then
@@ -429,11 +430,13 @@ POLICY
   policy_write "nomad-server"
   policy_write "vault-online"
   policy_write "operator"
+  policy_write "lambda-client-scale-in"
 
   token_role_write "nomad-cluster"
 
   token_write "nomad-server" -policy "nomad-server" -period 72h -orphan
-  token_write "vault-online" -policy "vault-online" -ttl=4380h
+  token_write "vault-online" -policy "vault-online" -ttl=6480d
+  token_write "lambda-client-scale-in" -policy "lambda-client-scale-in" -ttl=6480d
 
   if ! auth_method_exits "approle"; then
     vault auth enable approle
