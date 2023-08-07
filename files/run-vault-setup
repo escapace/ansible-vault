@@ -454,6 +454,13 @@ POLICY
 
   vault secrets enable -path=github -plugin-name=vault-plugin-secrets-github plugin
 
+  vault plugin register \
+    -sha256="$(sha256sum /opt/vault/plugins/vault-plugin-secrets-oauthapp | cut -d' ' -f1)" \
+    -command="vault-plugin-secrets-oauthapp" \
+    -args="-ca-cert=/opt/vault/tls/ca/vault-ca.pem" secret vault-plugin-secrets-oauthapp
+
+  vault secrets enable -path=oauthapp -plugin-name=vault-plugin-secrets-oauthapp plugin
+
   kv_write "kv/infrastructure/vault/online" value=true
 
   curl --header "X-Vault-Token: ${VAULT_TOKEN}" \

@@ -22,3 +22,9 @@ vault_plugin_secrets_github_checksum_file_url: "https://github.com/martinbaillie
 # vault_plugin_secrets_github_sha256sums_sig: "https://github.com/martinbaillie/vault-plugin-secrets-github/releases/download/v{{ vault_plugin_secrets_github_version }}/SHA256SUMS.sig"
 vault_plugin_secrets_github_file: "vault-plugin-secrets-github-linux-{{ vault_architecture }}"
 vault_plugin_secrets_github_file_url: "https://github.com/martinbaillie/vault-plugin-secrets-github/releases/download/v{{ vault_plugin_secrets_github_version }}/{{ vault_plugin_secrets_github_file }}"
+
+# vault_plugin_secrets_oauthapp_sha256sums_sig: "https://github.com/martinbaillie/vault-plugin-secrets-oauthapp/releases/download/v{{ vault_plugin_secrets_oauthapp_version }}/SHA256SUMS.sig"
+vault_plugin_secrets_oauthapp_file: "vault-plugin-secrets-oauthapp-v{{ vault_plugin_secrets_oauthapp_version }}-linux-{{ vault_architecture }}"
+vault_plugin_secrets_oauthapp_archive: "{{ vault_plugin_secrets_oauthapp_file }}.tar.xz"
+vault_plugin_secrets_oauthapp_archive_url: "https://github.com/puppetlabs/vault-plugin-secrets-oauthapp/releases/download/v{{ vault_plugin_secrets_oauthapp_version }}/{{ vault_plugin_secrets_oauthapp_archive }}"
+vault_plugin_secrets_oauthapp_checksum_archive_url: "https://github.com/puppetlabs/vault-plugin-secrets-oauthapp/releases/download/v{{ vault_plugin_secrets_oauthapp_version }}/{{ vault_plugin_secrets_oauthapp_archive }}.sha256.asc"
