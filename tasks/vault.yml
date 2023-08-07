@@ -11,6 +11,8 @@
       - unzip
       - jq
       - retry
+      - tar
+      - xz
 
 - name: vault group
   ansible.builtin.group:
