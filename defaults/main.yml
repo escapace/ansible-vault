@@ -2,6 +2,7 @@
 
 vault_version: "1.14.1"
 vault_plugin_secrets_github_version: "2.0.0"
+vault_plugin_secrets_oauthapp_version: "3.1.1"
 # vault_server: false
 
 vault_volume: true

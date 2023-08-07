@@ -67,14 +67,17 @@
         dest: "/tmp/{{ vault_archive }}"
         checksum: "sha256:{{ vault_checksum_file_url }}"
         mode: '0660'
-      changed_when: false
 
     - name: extract vault
       ansible.builtin.unarchive:
         src: "/tmp/{{ vault_archive }}"
         dest: "{{ vault_bin_dir }}"
         remote_src: true
-      changed_when: false
+
+    - name: cleanup
+      ansible.builtin.file:
+        path: "/tmp/{{ vault_archive }}"
+        state: "absent"
 
     - name: chcon vault binary
       ansible.builtin.file:
@@ -98,12 +101,6 @@
         owner: root
         group: root
         mode: '0644'
-
-- name: cleanup
-  ansible.builtin.file:
-    path: "/tmp/{{ vault_archive }}"
-    state: "absent"
-  changed_when: false
 
 - name: create a vault symbolic link
   ansible.builtin.file:
@@ -206,8 +203,13 @@
     group: root
     mode: 0644
 
-
 - ansible.builtin.include_tasks: vault-plugin-secrets-github.yml
+  tags:
+    - vault-plugins
+
+- ansible.builtin.include_tasks: vault-plugin-secrets-oauthapp.yml
+  tags:
+    - vault-plugins
 
 - ansible.builtin.include_tasks: storage-setup.yml
   when: (storage_setup_physical_device is defined) and (storage_setup_physical_device | length > 0) and (vault_volume|bool)
