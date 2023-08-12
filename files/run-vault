@@ -510,6 +510,8 @@ EOF
   )
 
   echo -e "$vault_snapshot_timer" >"/usr/lib/systemd/system/vault-snapshot.timer"
+
+  umask 027
 }
 
 function generate_ferm_config() {
