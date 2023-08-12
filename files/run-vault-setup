@@ -130,7 +130,7 @@ function get_object() {
   aws s3api get-object \
     --bucket "${SECRETS_BUCKET_NAME}" \
     --key "${key}" \
-    "${target}" > /dev/null || exit 1
+    "${target}" >/dev/null || exit 1
 
   chown "${user}:${user}" "${target}"
 }
@@ -246,7 +246,7 @@ function auth_method_exits() {
 function token_exists() {
   local id="${1}"
 
-  vault token lookup -format=json "${id}" &> /dev/null || return 1
+  vault token lookup -format=json "${id}" &>/dev/null || return 1
 }
 
 function token_write() {
@@ -260,14 +260,14 @@ function token_write() {
   if token_exists "${id}"; then
     log_warn "token ${name} already exists"
   else
-    vault token create -id "${id}" "${@}" &> /dev/null
+    vault token create -id "${id}" "${@}" &>/dev/null
   fi
 }
 
 function kv_exists() {
   local path="${1}"
 
-  vault kv get "${path}" &> /dev/null || return 1
+  vault kv get "${path}" &>/dev/null || return 1
 }
 
 function kv_write() {
@@ -278,7 +278,7 @@ function kv_write() {
   if kv_exists "${path}"; then
     log_warn "kv ${path} already exists"
   else
-    vault kv put "${path}" "${@}" &> /dev/null
+    vault kv put "${path}" "${@}" &>/dev/null
   fi
 }
 
@@ -301,25 +301,25 @@ function run() {
     local key="$1"
 
     case "$key" in
-      --role)
-        assert_not_empty "$key" "$2"
-        ROLE="$2"
-        shift
-        ;;
-      --secrets-bucket-name)
-        assert_not_empty "$key" "$2"
-        SECRETS_BUCKET_NAME="$2"
-        shift
-        ;;
-      --help)
-        print_usage
-        exit
-        ;;
-      *)
-        log_error "Unrecognized argument: $key"
-        print_usage
-        exit 1
-        ;;
+    --role)
+      assert_not_empty "$key" "$2"
+      ROLE="$2"
+      shift
+      ;;
+    --secrets-bucket-name)
+      assert_not_empty "$key" "$2"
+      SECRETS_BUCKET_NAME="$2"
+      shift
+      ;;
+    --help)
+      print_usage
+      exit
+      ;;
+    *)
+      log_error "Unrecognized argument: $key"
+      print_usage
+      exit 1
+      ;;
     esac
 
     shift
@@ -415,7 +415,7 @@ function run() {
     vault write aws/roles/operator \
       credential_type=iam_user \
       permissions_boundary_arn="${permissions_boundary_arn}" \
-      policy_document=-<<POLICY
+      policy_document=- <<POLICY
 {
   "Version": "2012-10-17",
   "Statement": [
