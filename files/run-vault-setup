@@ -26,38 +26,40 @@ function wrap() {
   local length
   local cols
   local width
+  local sep="|"
 
   length="$(echo -n "${strings}" | awk -F '|' '{print $1}' | awk '{ print length }' | sort -n | tail -1)"
   cols="$(tput cols)"
+  local cols_minus_four="$((cols - 4))"
 
-  if [[ $(((cols - 4) / length)) -ge 2 ]]; then
-    if [[ $((cols - length - 4)) -ge 80 ]]; then
-      width=80
+  if [[ "$((cols_minus_four / length))" -ge 2 ]]; then
+    if [[ "$((cols - length - 4))" -ge 80 ]]; then
+      width="80"
     else
-      width=$((cols - length - 4))
+      width="$((cols - length - 4))"
     fi
 
-    echo -e "${strings}" \
-      | fold -s -w "${width}" \
-      | sed -e "/--/! s|^| \||g" \
-      | column -t -s '|' \
-      | sed 's/^/  /'
+    echo -e "${strings}" |
+      fold -s -w "${width}" |
+      sed -e "/--/! s|^| \||g" |
+      column -t -s '|' |
+      sed 's/^/  /'
   else
     local lines
     local line
-    readarray -t lines <<< "${strings}"
+    readarray -t lines <<<"${strings}"
     local option
     local description
 
     if [[ "${cols}" -ge 80 ]]; then
       width="78"
     else
-      width=$((cols - 2))
+      width="$((cols - 2))"
     fi
 
     for line in "${lines[@]}"; do
-      option="${line%%|*}"
-      description=${line#*|}
+      option="${line%%$sep*}"
+      description="${line#*$sep}"
 
       echo "${option}"
       echo
