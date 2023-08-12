@@ -629,7 +629,7 @@ function run() {
       ;;
     --snapshot-on)
       assert_not_empty "$key" "$2"
-      role="$2"
+      snapshot_on="$2"
       shift
       ;;
     --auto-join-tag-key)
