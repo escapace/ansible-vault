@@ -141,6 +141,16 @@
   tags:
     - run-vault
 
+- name: copy vault-snapshot script
+  ansible.builtin.copy:
+    src: files/vault-snapshot
+    dest: "{{ vault_bin_dir }}/vault-snapshot"
+    mode: 0770
+    owner: vault
+    group: vault
+  tags:
+    - run-vault
+
 - name: copy run-vault-setup script
   ansible.builtin.copy:
     src: files/run-vault-setup

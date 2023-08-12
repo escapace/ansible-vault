@@ -14,7 +14,6 @@ SCRIPT_NAME="$(basename "$0")"
 
 readonly VAULT_CONFIG_FILE="default.hcl"
 readonly VAULT_SYSTEMD_CONFIG_PATH="/usr/lib/systemd/system/vault.service"
-# readonly VAULT_BOOTSTRAP_SYSTEMD_CONFIG_PATH="/etc/systemd/system/vault-bootstrap.service.d/010-secrets-bucket.conf"
 readonly MAX_RETRIES=30
 readonly SLEEP_BETWEEN_RETRIES_SEC=10
 
@@ -81,6 +80,7 @@ function print_usage() {
     echo -e "--auto-join-tag-key|Automatically form a cluster with instances that have this tag key."
     echo -e "--auto-join-tag-value|Automatically form a cluster with instances that have this tag value."
     echo -e "--kms-key-arn|The AWS KMS key ID or ARN to use for encryption and decryption."
+    echo -e "--snapshot-on|Calendar event expression for vault snapsots."
     echo -e "--secrets-bucket-name|AWS S3 secrets bucket name."
     echo -e "--ui|Enables the service of the web UI from this agent."
     echo -e "--interface|Bind to interface."
@@ -350,6 +350,7 @@ function generate_systemd_config() {
   local -r vault_bin_dir="$3"
   local -r vault_user="$4"
   local -r secrets_bucket_name="$5"
+  local -r snapshot_on="$6"
 
   local -r config_path="$vault_config_dir/$VAULT_CONFIG_FILE"
   local -r systemd_config_path="${VAULT_SYSTEMD_CONFIG_PATH}"
@@ -467,6 +468,48 @@ EOF
   )
 
   echo -e "$vault_online_timer" >"/usr/lib/systemd/system/vault-online.timer"
+
+  # vault-snapshot
+
+  local -r vault_snapshot_service=$(
+    cat <<EOF
+[Unit]
+Description="Vault Snapshot"
+ConditionFileNotEmpty=$config_path
+After=vault-online.target
+Wants=vault-online.target
+
+[Service]
+Type=oneshot
+User=vault
+Group=vault
+ExecStart=retry /opt/vault/bin/vault-snapshot
+Environment='SECRETS_BUCKET_NAME=${secrets_bucket_name}'
+Environment='VAULT_ADDR=https://[::1]:8200'
+Environment='VAULT_ROLE=${role}'
+EOF
+  )
+
+  echo -e "$vault_snapshot_service" >"/usr/lib/systemd/system/vault-snapshot.service"
+
+  local -r vault_snapshot_timer=$(
+    cat <<EOF
+[Unit]
+Description=vault-snapshot timer
+Wants=vault-online.target
+
+[Timer]
+OnCalendar=${snapshot_on}
+RandomizedDelaySec=60m
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+
+EOF
+  )
+
+  echo -e "$vault_snapshot_timer" >"/usr/lib/systemd/system/vault-snapshot.timer"
 }
 
 function generate_ferm_config() {
@@ -522,8 +565,8 @@ function start_vault() {
   log_info "Reloading systemd config and starting Vault"
 
   sudo systemctl daemon-reload
-  sudo systemctl enable vault-online.target vault-online.timer
-  sudo systemctl --no-block restart ferm vault-online.target vault-online.timer
+  sudo systemctl enable vault-online.target vault-online.timer vault-snapshot.timer
+  sudo systemctl --no-block restart ferm vault-online.target vault-online.timer vault-snapshot.timer
 }
 
 # Based on: http://unix.stackexchange.com/a/7732/215969
@@ -571,12 +614,18 @@ function run() {
   local ipv6="false"
   local interface="eth0"
   local kms_key_arn=""
+  local snapshot_on="*-*-* 04:00:00"
 
   while [[ $# -gt 0 ]]; do
     local key="$1"
 
     case "$key" in
     --role)
+      assert_not_empty "$key" "$2"
+      role="$2"
+      shift
+      ;;
+    --snapshot-on)
       assert_not_empty "$key" "$2"
       role="$2"
       shift
@@ -740,7 +789,8 @@ function run() {
     "$config_dir" \
     "$bin_dir" \
     "$user" \
-    "$secrets_bucket_name"
+    "$secrets_bucket_name" \
+    "$snapshot_on"
 
   generate_ferm_config \
     "$server" \

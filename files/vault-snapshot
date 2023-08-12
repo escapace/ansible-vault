@@ -1,0 +1,124 @@
+#!/bin/bash
+
+set -e
+set -u
+set -o pipefail
+
+if [[ -z "${SECRETS_BUCKET_NAME}" ]]; then
+  log_error "SECRETS_BUCKET_NAME not set"
+
+  exit 1
+fi
+
+if [[ -z "${VAULT_ADDR}" ]]; then
+  log_error "VAULT_ADDR not set"
+
+  exit 1
+fi
+
+set -o allexport
+source "/etc/sysconfig/ec2-environment"
+set +o allexport
+
+readonly script_name="$(basename "$0")"
+readonly script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly directory="$(cd "$script_dir/.." && pwd)"
+readonly snapshot_path="${directory}/snapshot"
+
+function log() {
+  local -r level="$1"
+  local -r message="$2"
+  local -r timestamp=$(date +"%Y-%m-%d %H:%M:%S")
+  echo >&2 -e "${timestamp} [${level}] [$script_name] ${message}"
+}
+
+function log_info() {
+  local -r message="$1"
+  log "INFO" "$message"
+}
+
+function get_object_value() {
+  local -r source="$1"
+
+  local -r key="${EC2_INSTANCE_REGION}/server/${source}"
+
+  log_info "Downloading ${key}"
+
+  aws s3 cp --quiet \
+    "s3://${SECRETS_BUCKET_NAME}/${key}" /dev/stdout || exit 1
+}
+
+function vault_token() {
+  VAULT_TOKEN="$(get_object_value "vault/vault-token-vault-snapshot")"
+
+  export VAULT_TOKEN
+
+  vault token renew &>/dev/null || exit 1
+}
+
+function vault_check_initialized() {
+  local value
+
+  value="$(vault status -format json | jq -r '.initialized')"
+
+  if [[ "${value}" == "true" ]]; then
+    return 0
+  else
+    return 1
+  fi
+}
+
+function vault_check_unsealed() {
+  local value
+
+  value="$(vault status -format json | jq -r '.sealed')"
+
+  if [[ "${value}" == "false" ]]; then
+    return 0
+  else
+    return 1
+  fi
+}
+
+function vault_is_leader() {
+  local value
+
+  value="$(vault read /sys/leader --format=json | jq -r ".data.is_self")"
+
+  if [[ "${value}" == "true" ]]; then
+    return 0
+  else
+    return 1
+  fi
+}
+
+function snapshot() {
+  vault operator raft snapshot save "${snapshot_path}" || return 1
+
+  chmod 600 "${snapshot_path}" || return 1
+
+  aws s3api put-object \
+    --tagging "instance-id=${EC2_INSTANCE_ID}" \
+    --bucket "${SECRETS_BUCKET_NAME}" \
+    --key "${EC2_INSTANCE_REGION}/server/vault/snapshot/latest" \
+    --body "${snapshot_path}" &>/dev/null || return 1
+
+  rm -f "${snapshot_path}" &>/dev/null || true
+
+  log_info "vault snapshot taken"
+}
+
+function main() {
+  vault_token || return 1
+  vault_check_initialized || return 1
+  vault_check_unsealed || return 1
+  vault_is_leader || return 0
+
+  snapshot || {
+    log_error "unable to take vault snapshot"
+    rm -f "${snapshot_path}" &>/dev/null
+    return 1
+  }
+}
+
+main

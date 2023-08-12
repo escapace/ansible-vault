@@ -193,6 +193,19 @@ function policy_write() {
   fi
 }
 
+function plugin_exists() {
+  local name="${1}"
+  local value
+
+  value="$(vault plugin list -format=json | jq -r "any(.details[].name; . == \"${name}\")")"
+
+  if [[ "${value}" == "true" ]]; then
+    return 0
+  else
+    return 1
+  fi
+}
+
 function token_role_exists() {
   local name="${1}"
 
@@ -431,6 +444,7 @@ POLICY
 
   policy_write "nomad-server"
   policy_write "vault-online"
+  policy_write "vault-snapshot"
   policy_write "operator"
   policy_write "lambda-client-scale-in"
 
@@ -438,6 +452,7 @@ POLICY
 
   token_write "nomad-server" -policy "nomad-server" -period 72h -orphan
   token_write "vault-online" -policy "vault-online" -ttl=6480d
+  token_write "vault-snapshot" -policy "vault-snapshot" -ttl=6480d
   token_write "lambda-client-scale-in" -policy "lambda-client-scale-in" -ttl=6480d
 
   if ! auth_method_exits "approle"; then
@@ -449,19 +464,23 @@ POLICY
       token_max_ttl=4h
   fi
 
-  vault plugin register \
-    -sha256="$(sha256sum /opt/vault/plugins/vault-plugin-secrets-github | cut -d' ' -f1)" \
-    -command="vault-plugin-secrets-github" \
-    -args="-ca-cert=/opt/vault/tls/ca/vault-ca.pem" secret vault-plugin-secrets-github
+  if ! plugin_exists "vault-plugin-secrets-github"; then
+    vault plugin register \
+      -sha256="$(sha256sum /opt/vault/plugins/vault-plugin-secrets-github | cut -d' ' -f1)" \
+      -command="vault-plugin-secrets-github" \
+      -args="-ca-cert=/opt/vault/tls/ca/vault-ca.pem" secret vault-plugin-secrets-github
 
-  vault secrets enable -path=github -plugin-name=vault-plugin-secrets-github plugin
+    vault secrets enable -path=github -plugin-name=vault-plugin-secrets-github plugin
+  fi
 
-  vault plugin register \
-    -sha256="$(sha256sum /opt/vault/plugins/vault-plugin-secrets-oauthapp | cut -d' ' -f1)" \
-    -command="vault-plugin-secrets-oauthapp" \
-    -args="-ca-cert=/opt/vault/tls/ca/vault-ca.pem" secret vault-plugin-secrets-oauthapp
+  if ! plugin_exists "vault-plugin-secrets-oauthapp"; then
+    vault plugin register \
+      -sha256="$(sha256sum /opt/vault/plugins/vault-plugin-secrets-oauthapp | cut -d' ' -f1)" \
+      -command="vault-plugin-secrets-oauthapp" \
+      -args="-ca-cert=/opt/vault/tls/ca/vault-ca.pem" secret vault-plugin-secrets-oauthapp
 
-  vault secrets enable -path=oauthapp -plugin-name=vault-plugin-secrets-oauthapp plugin
+    vault secrets enable -path=oauthapp -plugin-name=vault-plugin-secrets-oauthapp plugin
+  fi
 
   kv_write "kv/infrastructure/vault/online" value=true
 
