@@ -409,7 +409,7 @@ function run() {
       token="$(get_object_value "${ROLE}/vault/nomad-acl-token-nomad-initial-management")"
 
     vault write nomad/role/operator policies=operator
-    vault write nomad/role/lambda-client-scale-in policies=lambda-client-scale-in
+    vault write nomad/role/asg-hook-nomad-drain policies=asg-hook-nomad-drain
   fi
 
   if ! secrets_engine_exits "aws"; then
@@ -446,14 +446,14 @@ POLICY
   policy_write "vault-online"
   policy_write "vault-snapshot"
   policy_write "operator"
-  policy_write "lambda-client-scale-in"
+  policy_write "asg-hook-nomad-drain"
 
   token_role_write "nomad-cluster"
 
   token_write "nomad-server" -policy "nomad-server" -period 72h -orphan
   token_write "vault-online" -policy "vault-online" -ttl=6480d
   token_write "vault-snapshot" -policy "vault-snapshot" -ttl=6480d
-  token_write "lambda-client-scale-in" -policy "lambda-client-scale-in" -ttl=6480d
+  token_write "asg-hook-nomad-drain" -policy "asg-hook-nomad-drain" -ttl=6480d
 
   # if ! auth_method_exits "approle"; then
   #   vault auth enable approle
