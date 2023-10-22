@@ -455,14 +455,14 @@ POLICY
   token_write "vault-snapshot" -policy "vault-snapshot" -ttl=6480d
   token_write "lambda-client-scale-in" -policy "lambda-client-scale-in" -ttl=6480d
 
-  if ! auth_method_exits "approle"; then
-    vault auth enable approle
-
-    vault write auth/approle/role/operator \
-      token_policies="operator" \
-      token_ttl=2h \
-      token_max_ttl=4h
-  fi
+  # if ! auth_method_exits "approle"; then
+  #   vault auth enable approle
+  #
+  #   vault write auth/approle/role/operator \
+  #     token_policies="operator" \
+  #     token_ttl=2h \
+  #     token_max_ttl=4h
+  # fi
 
   if ! plugin_exists "vault-plugin-secrets-github"; then
     vault plugin register \
