@@ -286,9 +286,13 @@ listener "tcp" {
 }
 
 listener "tcp" {
+{{ if conv.ToBool ((ds "data").ipv6) }}
+  address = "[${address}]:8200"
+  cluster_address = "[${address}]:8201"
+{{ else }}
   address = "${address}:8200"
   cluster_address = "${address}:8201"
-
+{{ end }}
   tls_cert_file = "${vault_cert_file_path}"
   tls_client_ca_file = "${vault_ca_file_path}"
   tls_key_file = "${vault_key_file_path}"
