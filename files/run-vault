@@ -305,7 +305,7 @@ storage "raft" {
 
   retry_join {
 {{ if conv.ToBool ((ds "data").ipv6) }}
-    auto_join = "provider=aws addr_type=private_v6 region=${instance_region} tag_key=$auto_join_tag_key tag_value=$auto_join_tag_value"
+    auto_join = "provider=aws addr_type=public_v6 region=${instance_region} tag_key=$auto_join_tag_key tag_value=$auto_join_tag_value"
 {{ else }}
     auto_join = "provider=aws addr_type=private_v4 region=${instance_region} tag_key=$auto_join_tag_key tag_value=$auto_join_tag_value"
 {{ end }}
