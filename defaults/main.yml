@@ -1,7 +1,7 @@
 ---
 
 # https://github.com/hashicorp/vault
-vault_version: "1.15.1"
+vault_version: "1.15.2"
 # https://github.com/martinbaillie/vault-plugin-secrets-github
 vault_plugin_secrets_github_version: "2.0.0"
 # https://github.com/puppetlabs/vault-plugin-secrets-oauthapp
