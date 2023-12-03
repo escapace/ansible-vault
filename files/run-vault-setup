@@ -256,6 +256,53 @@ function auth_method_exits() {
   fi
 }
 
+function auth_aws_role_exists() {
+  local name="${1}"
+
+  local value
+  value="$(vault list -format=json auth/aws/roles | jq -r ". | any(. == \"${name}\")")"
+
+  if [[ "${value}" == "true" ]]; then
+    return 0
+  else
+    return 1
+  fi
+}
+
+function auth_aws_role_write() {
+  local name="${1}"
+
+  declare -A env_vars
+  local args=()
+  local json
+
+  json="$(get_object_value "${ROLE}/vault/vault-auth-aws-role-${name}")"
+
+  env_vars["auth_type"]="iam"
+
+  while IFS="=" read -r key value; do
+    if [[ "${key}" == "name" ]]; then
+      name="${value}"
+    else
+      env_vars["$key"]="$value"
+    fi
+  done < <(jq -r ".[] |= if type == \"array\" then join(\",\") else tostring end|to_entries|map(\"\(.key)=\(.value|tostring)\")|.[]" <<<"$json")
+
+  for key in "${!env_vars[@]}"; do
+    args+=("${key}=${env_vars[$key]}")
+  done
+
+  if [[ -z "$name" ]]; then
+    return 1
+  fi
+
+  if auth_aws_role_exists "${name}"; then
+    log_info "auth/aws/role/${name} already exists"
+  else
+    vault write "auth/aws/role/${name}" "${args[@]}"
+  fi
+}
+
 function token_exists() {
   local id="${1}"
 
@@ -409,7 +456,7 @@ function run() {
       token="$(get_object_value "${ROLE}/vault/nomad-acl-token-nomad-initial-management")"
 
     vault write nomad/role/operator policies=operator
-    vault write nomad/role/asg-hook-nomad-drain policies=asg-hook-nomad-drain
+    vault write nomad/role/lambda-nomad-drain policies=lambda-nomad-drain
   fi
 
   if ! secrets_engine_exits "aws"; then
@@ -446,23 +493,23 @@ POLICY
   policy_write "vault-online"
   policy_write "vault-snapshot"
   policy_write "operator"
-  policy_write "asg-hook-nomad-drain"
+  policy_write "lambda-nomad-drain"
 
   token_role_write "nomad-cluster"
 
   token_write "nomad-server" -policy "nomad-server" -period 72h -orphan
   token_write "vault-online" -policy "vault-online" -ttl=6480d
   token_write "vault-snapshot" -policy "vault-snapshot" -ttl=6480d
-  token_write "asg-hook-nomad-drain" -policy "asg-hook-nomad-drain" -ttl=6480d
+  # token_write "lambda-nomad-drain" -policy "lambda-nomad-drain" -ttl=6480d
 
-  # if ! auth_method_exits "approle"; then
-  #   vault auth enable approle
-  #
-  #   vault write auth/approle/role/operator \
-  #     token_policies="operator" \
-  #     token_ttl=2h \
-  #     token_max_ttl=4h
-  # fi
+  if ! auth_method_exits "aws"; then
+    vault auth enable aws
+
+    vault write auth/aws/config/client \
+      iam_server_id_header_value=vault.service.consul
+  fi
+
+  auth_aws_role_write lambda-nomad-drain
 
   if ! plugin_exists "vault-plugin-secrets-github"; then
     vault plugin register \

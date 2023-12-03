@@ -14,8 +14,6 @@ SCRIPT_NAME="$(basename "$0")"
 
 readonly VAULT_CONFIG_FILE="default.hcl"
 readonly VAULT_SYSTEMD_CONFIG_PATH="/usr/lib/systemd/system/vault.service"
-readonly MAX_RETRIES=30
-readonly SLEEP_BETWEEN_RETRIES_SEC=10
 
 function wrap() {
   local strings="${1}"
