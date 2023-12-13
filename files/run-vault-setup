@@ -219,16 +219,16 @@ function token_role_exists() {
   fi
 }
 
-function token_role_write() {
-  local name="${1}"
-
-  if token_role_exists "${name}"; then
-    log_warn "token role ${name} already exists"
-  else
-    get_object_value \
-      "${ROLE}/vault/vault-token-role-${name}.json" | vault write "/auth/token/roles/${name}" -
-  fi
-}
+# function token_role_write() {
+#   local name="${1}"
+#
+#   if token_role_exists "${name}"; then
+#     log_warn "token role ${name} already exists"
+#   else
+#     get_object_value \
+#       "${ROLE}/vault/vault-token-role-${name}.json" | vault write "/auth/token/roles/${name}" -
+#   fi
+# }
 
 function secrets_engine_exits() {
   local name="${1}"
@@ -489,18 +489,15 @@ function run() {
 POLICY
   fi
 
-  policy_write "nomad-server"
+  policy_write "lambda-nomad-drain"
+  policy_write "nomad-bootstrap"
+  policy_write "operator"
   policy_write "vault-online"
   policy_write "vault-snapshot"
-  policy_write "operator"
-  policy_write "lambda-nomad-drain"
 
-  token_role_write "nomad-cluster"
-
-  token_write "nomad-server" -policy "nomad-server" -period 72h -orphan
+  token_write "nomad-bootstrap" -policy "nomad-bootstrap" -ttl=6480d
   token_write "vault-online" -policy "vault-online" -ttl=6480d
   token_write "vault-snapshot" -policy "vault-snapshot" -ttl=6480d
-  # token_write "lambda-nomad-drain" -policy "lambda-nomad-drain" -ttl=6480d
 
   if ! auth_method_exits "aws"; then
     vault auth enable aws
