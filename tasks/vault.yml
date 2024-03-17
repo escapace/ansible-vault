@@ -1,5 +1,4 @@
 ---
-
 - name: install dependencies
   ansible.builtin.dnf:
     name: "{{ packages }}"
@@ -33,7 +32,7 @@
     group: vault
     path: "{{ item }}"
     state: directory
-    mode: 0755
+    mode: "0755"
   with_items:
     - "{{ vault_dir }}"
     - "{{ vault_bin_dir }}"
@@ -44,7 +43,7 @@
     group: vault
     path: "{{ item }}"
     state: directory
-    mode: 0750
+    mode: "0750"
   with_items:
     - "{{ vault_dir }}/data"
     - "{{ vault_dir }}/config"
@@ -66,27 +65,27 @@
     - name: download vault
       ansible.builtin.get_url:
         url: "{{ vault_zip_url }}"
-        dest: "/tmp/{{ vault_archive }}"
-        checksum: "sha256:{{ vault_checksum_file_url }}"
-        mode: '0660'
+        dest: /tmp/{{ vault_archive }}
+        checksum: sha256:{{ vault_checksum_file_url }}
+        mode: "0660"
 
     - name: extract vault
       ansible.builtin.unarchive:
-        src: "/tmp/{{ vault_archive }}"
+        src: /tmp/{{ vault_archive }}
         dest: "{{ vault_bin_dir }}"
         remote_src: true
 
     - name: cleanup
       ansible.builtin.file:
-        path: "/tmp/{{ vault_archive }}"
-        state: "absent"
+        path: /tmp/{{ vault_archive }}
+        state: absent
 
     - name: chcon vault binary
       ansible.builtin.file:
         path: "{{ vault_bin_dir }}/vault"
         owner: vault
         group: vault
-        mode: 0755
+        mode: "0755"
         setype: bin_t
         seuser: system_u
 
@@ -102,7 +101,7 @@
         dest: "{{ vault_dir }}/version"
         owner: root
         group: root
-        mode: '0644'
+        mode: "0644"
 
 - name: create a vault symbolic link
   ansible.builtin.file:
@@ -110,7 +109,7 @@
     dest: /usr/bin/vault
     owner: vault
     group: vault
-    mode: 0755
+    mode: "0755"
     state: link
 
 - name: create directory for systemd drop-ins
@@ -119,13 +118,13 @@
     owner: root
     group: root
     state: directory
-    mode: 0755
+    mode: "0755"
 
 - name: copy run-vault script
   ansible.builtin.copy:
     src: files/run-vault
     dest: "{{ vault_bin_dir }}/run-vault"
-    mode: 0770
+    mode: "0770"
     owner: vault
     group: vault
   tags:
@@ -135,7 +134,7 @@
   ansible.builtin.copy:
     src: files/vault-online
     dest: "{{ vault_bin_dir }}/vault-online"
-    mode: 0770
+    mode: "0770"
     owner: vault
     group: vault
   tags:
@@ -145,7 +144,7 @@
   ansible.builtin.copy:
     src: files/vault-snapshot
     dest: "{{ vault_bin_dir }}/vault-snapshot"
-    mode: 0770
+    mode: "0770"
     owner: vault
     group: vault
   tags:
@@ -155,7 +154,7 @@
   ansible.builtin.copy:
     src: files/run-vault-setup
     dest: "{{ vault_bin_dir }}/run-vault-setup"
-    mode: 0770
+    mode: "0770"
     owner: vault
     group: vault
   tags:
@@ -163,14 +162,14 @@
 
 - name: prevent core dumps
   ansible.posix.sysctl:
-    name: "kernel.core_pattern"
+    name: kernel.core_pattern
     value: "|/bin/false"
     state: present
   when: not vault_role_debug | bool
 
 - name: set fs.suid_dumpable
   ansible.posix.sysctl:
-    name: "fs.suid_dumpable"
+    name: fs.suid_dumpable
     value: "0"
     state: present
   when: not vault_role_debug | bool
@@ -178,7 +177,7 @@
 - name: write /etc/security/limits.d/vault.conf
   ansible.builtin.copy:
     content: "* hard core 0"
-    dest: "/etc/security/limits.d/vault.conf"
+    dest: /etc/security/limits.d/vault.conf
     owner: root
     group: root
     mode: "0644"
@@ -189,31 +188,31 @@
     owner: root
     group: root
     state: directory
-    mode: 0755
+    mode: "0755"
 
 - name: write /etc/profile.d/ulimit.sh
   ansible.builtin.copy:
-    content: "ulimit -S -c 0 > /dev/null  2>&1"
-    dest: "/etc/profile.d/ulimit.sh"
+    content: ulimit -S -c 0 > /dev/null  2>&1
+    dest: /etc/profile.d/ulimit.sh
     owner: root
     group: root
     mode: "0644"
 
 - name: disable coredump
   ansible.builtin.template:
-    src:  "coredump-disable.conf.j2"
-    dest: "/etc/systemd/system/coredump.conf.d/disable.conf"
+    src: coredump-disable.conf.j2
+    dest: /etc/systemd/system/coredump.conf.d/disable.conf
     owner: root
     group: root
-    mode: 0644
+    mode: "0644"
 
 - name: write /etc/profile.d/vault.sh
   ansible.builtin.template:
-    src:  "profile-vault.sh.j2"
-    dest: "/etc/profile.d/vault.sh"
+    src: profile-vault.sh.j2
+    dest: /etc/profile.d/vault.sh
     owner: root
     group: root
-    mode: 0644
+    mode: "0644"
 
 - ansible.builtin.include_tasks: vault-plugin-secrets-github.yml
   tags:

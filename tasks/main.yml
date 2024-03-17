@@ -1,5 +1,4 @@
 ---
-
 - ansible.builtin.include_tasks: vault.yml
   when: ansible_os_family == "RedHat"
   tags:
