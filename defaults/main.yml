@@ -1,5 +1,4 @@
 ---
-
 # https://github.com/hashicorp/vault
 vault_version: 1.15.4
 # https://github.com/martinbaillie/vault-plugin-secrets-github
