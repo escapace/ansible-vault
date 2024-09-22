@@ -9,7 +9,7 @@
     dest: /etc/systemd/system/vault.service.d/020-storage-options.conf
     owner: root
     group: root
-    mode: "0644"
+    mode: '0644'
 
 - name: /opt/vault/data directory
   ansible.builtin.file:
@@ -17,7 +17,7 @@
     state: directory
     owner: vault
     group: vault
-    mode: "0700"
+    mode: '0700'
 
 - name: vault storage configuration
   ansible.builtin.template:
@@ -25,4 +25,4 @@
     dest: /etc/filesystems.d/30-vault.conf
     owner: root
     group: root
-    mode: "0644"
+    mode: '0644'

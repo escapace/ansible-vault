@@ -1,5 +1,5 @@
 ---
-- ansible.builtin.include_tasks: vault.yml
+- ansible.builtin.include_tasks: vault.yaml
   when: ansible_os_family == "RedHat"
   tags:
     - run-vault
