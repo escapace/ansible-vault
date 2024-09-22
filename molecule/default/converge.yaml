@@ -5,4 +5,4 @@
     vault_role_debug: true
     ferm_role_debug: true
   roles:
-    - role: escapace.vault
+    - role: "{{ lookup('env', 'MOLECULE_PROJECT_DIRECTORY') | basename }}"
